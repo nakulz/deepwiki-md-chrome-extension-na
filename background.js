@@ -1,3 +1,5 @@
+import { isSupportedWikiUrl } from './utils/urlUtils.js';
+
 // A queue to hold messages for tabs that are not yet ready
 const messageQueue = {};
 
@@ -55,7 +57,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
 // Listen for tab update complete event, for batch processing
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  if (changeInfo.status === 'complete' && tab.url && tab.url.includes('deepwiki.com')) {
+  if (changeInfo.status === 'complete' && isSupportedWikiUrl(tab?.url)) {
     // Initialize the message queue for this tab as not ready
     if (!messageQueue[tabId] || !messageQueue[tabId].isReady) {
         messageQueue[tabId] = { isReady: false, queue: [] };
@@ -71,9 +73,9 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 
 // Also listen for tab activation to reinitialize connection if needed
 chrome.tabs.onActivated.addListener(activeInfo => {
-  // When a tab becomes active, check if it's a DeepWiki tab
+  // When a tab becomes active, check if it's a supported wiki tab
   chrome.tabs.get(activeInfo.tabId, tab => {
-    if (tab && tab.url && tab.url.includes('deepwiki.com')) {
+    if (tab && isSupportedWikiUrl(tab.url)) {
       // Ensure queue is initialized
       if (!messageQueue[tab.id]) {
         messageQueue[tab.id] = { isReady: false, queue: [] };

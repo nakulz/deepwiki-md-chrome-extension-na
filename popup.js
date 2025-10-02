@@ -1,3 +1,5 @@
+import { isSupportedWikiUrl } from './utils/urlUtils.js';
+
 const FALLBACK_FILENAME = 'deepwiki-page';
 
 function sanitizeFilename(input, options = {}) {
@@ -45,7 +47,7 @@ document.addEventListener('DOMContentLoaded', () => {
     try {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       
-      if (!tab.url.includes('deepwiki.com')) {
+      if (!isSupportedWikiUrl(tab?.url)) {
         showStatus('Please use this extension on a DeepWiki page', 'error');
         return;
       }
@@ -93,7 +95,7 @@ document.addEventListener('DOMContentLoaded', () => {
     try {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       
-      if (!tab.url.includes('deepwiki.com')) {
+      if (!isSupportedWikiUrl(tab?.url)) {
         showStatus('Please use this extension on a DeepWiki page', 'error');
         return;
       }

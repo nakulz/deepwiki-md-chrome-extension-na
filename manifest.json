@@ -9,7 +9,8 @@
     "tabs"
   ],
   "host_permissions": [
-    "https://deepwiki.com/*"
+    "https://deepwiki.com/*",
+    "https://app.devin.ai/wiki/*"
   ],
   "action": {
     "default_popup": "popup.html",
@@ -21,7 +22,10 @@
   },
   "content_scripts": [
     {
-      "matches": ["https://deepwiki.com/*"],
+      "matches": [
+        "https://deepwiki.com/*",
+        "https://app.devin.ai/wiki/*"
+      ],
       "js": ["content.js"],
       "run_at": "document_end"
     }
