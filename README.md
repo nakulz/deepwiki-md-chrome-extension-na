@@ -20,7 +20,8 @@ The conversion to Markdown format is as follows:
 
 1. Convert single page content from DeepWiki or Devin wiki pages to Markdown format
 2. One-click batch conversion and download of all subpages of a document (packaged as a ZIP file)
-3. The UML diagrams in the document will also be saved.
+3. Automatically detect and download linked Markdown resources listed within a wiki page
+4. The UML diagrams in the document will also be saved.
 
 ## How to Use
 

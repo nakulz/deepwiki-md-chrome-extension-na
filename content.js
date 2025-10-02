@@ -21,53 +21,174 @@ function sanitizeFilename(input) {
   return sanitized || FALLBACK_FILENAME;
 }
 
+function ensureMarkdownExtension(fileName) {
+  if (typeof fileName !== 'string' || !fileName.trim()) {
+    return 'resource.md';
+  }
+
+  return fileName.toLowerCase().endsWith('.md') ? fileName : `${fileName}.md`;
+}
+
+function extractLinkLabel(link) {
+  const text = link.textContent?.trim();
+  if (text) {
+    return text;
+  }
+
+  const ariaLabel = link.getAttribute('aria-label');
+  if (ariaLabel && ariaLabel.trim()) {
+    return ariaLabel.trim();
+  }
+
+  const titleAttr = link.getAttribute('title');
+  if (titleAttr && titleAttr.trim()) {
+    return titleAttr.trim();
+  }
+
+  return '';
+}
+
+function resolveMarkdownLink(link) {
+  const href = link.getAttribute('href');
+  if (!href || href.startsWith('#') || href.toLowerCase().startsWith('javascript:')) {
+    return null;
+  }
+
+  let url;
+  try {
+    url = new URL(href, window.location.href);
+  } catch (error) {
+    return null;
+  }
+
+  if (url.origin !== window.location.origin) {
+    return null;
+  }
+
+  if (!/\.md($|[?#])/i.test(url.pathname)) {
+    return null;
+  }
+
+  const label = extractLinkLabel(link);
+  const lastSegment = url.pathname.split('/').filter(Boolean).pop() || 'resource.md';
+  const decodedSegment = decodeURIComponent(lastSegment);
+  const baseNameCandidate = label || decodedSegment;
+  const sanitizedBase = sanitizeFilename(baseNameCandidate) || FALLBACK_FILENAME;
+  const fileName = ensureMarkdownExtension(sanitizedBase);
+
+  return {
+    url: url.href,
+    fileName,
+    displayName: label || decodedSegment || fileName
+  };
+}
+
+function collectMarkdownResourceLinks() {
+  const links = Array.from(document.querySelectorAll('a[href]'));
+  const seen = new Set();
+  const results = [];
+
+  links.forEach(link => {
+    const resolved = resolveMarkdownLink(link);
+    if (!resolved) {
+      return;
+    }
+
+    if (seen.has(resolved.url)) {
+      return;
+    }
+
+    seen.add(resolved.url);
+    results.push(resolved);
+  });
+
+  return results;
+}
+
+async function fetchMarkdownResources() {
+  const resourceLinks = collectMarkdownResourceLinks();
+  if (!resourceLinks.length) {
+    return [];
+  }
+
+  const fetchedResources = [];
+
+  for (const resource of resourceLinks) {
+    try {
+      const response = await fetch(resource.url, { credentials: 'include' });
+      if (!response.ok) {
+        console.warn('Failed to fetch markdown resource', resource.url, response.status);
+        continue;
+      }
+
+      const content = await response.text();
+      fetchedResources.push({
+        fileName: resource.fileName,
+        content,
+        sourceUrl: resource.url,
+        displayName: resource.displayName
+      });
+    } catch (error) {
+      console.warn('Error fetching markdown resource', resource.url, error);
+    }
+  }
+
+  return fetchedResources;
+}
+
 // Listen for messages from popup
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === "convertToMarkdown") {
-    try {
-      // Get page title from head
-      const headTitle = document.title || "";
-      const formattedHeadTitle = headTitle ? sanitizeFilename(headTitle) : "";
+    (async () => {
+      try {
+        // Get page title from head
+        const headTitle = document.title || "";
+        const formattedHeadTitle = headTitle ? sanitizeFilename(headTitle) : "";
 
-      // Get article title (keep unchanged)
-      const title =
-        document
-          .querySelector(
-            '.container > div:nth-child(1) a[data-selected="true"]'
-          )
-          ?.textContent?.trim() ||
-        document
-          .querySelector(".container > div:nth-child(1) h1")
-          ?.textContent?.trim() ||
-        document.querySelector("h1")?.textContent?.trim() ||
-        "Untitled";
+        // Get article title (keep unchanged)
+        const title =
+          document
+            .querySelector(
+              '.container > div:nth-child(1) a[data-selected="true"]'
+            )
+            ?.textContent?.trim() ||
+          document
+            .querySelector(".container > div:nth-child(1) h1")
+            ?.textContent?.trim() ||
+          document.querySelector("h1")?.textContent?.trim() ||
+          "Untitled";
 
-      // Get article content container (keep unchanged)
-      const contentContainer =
-        document.querySelector(".container > div:nth-child(2) .prose") ||
-        document.querySelector(".container > div:nth-child(2) .prose-custom") ||
-        document.querySelector(".container > div:nth-child(2)") ||
-        document.body;
+        // Get article content container (keep unchanged)
+        const contentContainer =
+          document.querySelector(".container > div:nth-child(2) .prose") ||
+          document.querySelector(".container > div:nth-child(2) .prose-custom") ||
+          document.querySelector(".container > div:nth-child(2)") ||
+          document.body;
 
-      let markdown = ``;
-      let markdownTitle = sanitizeFilename(title);
+        let markdown = ``;
+        let markdownTitle = sanitizeFilename(title);
 
-      contentContainer.childNodes.forEach((child) => {
-        markdown += processNode(child);
-      });
+        contentContainer.childNodes.forEach((child) => {
+          markdown += processNode(child);
+        });
 
-      // Normalize blank lines
-      markdown = markdown.trim().replace(/\n{3,}/g, "\n\n");
-      sendResponse({ 
-        success: true, 
-        markdown, 
-        markdownTitle,
-        headTitle: formattedHeadTitle
-      });
-    } catch (error) {
-      console.error("Error converting to Markdown:", error);
-      sendResponse({ success: false, error: error.message });
-    }
+        // Normalize blank lines
+        markdown = markdown.trim().replace(/\n{3,}/g, "\n\n");
+
+        const attachments = await fetchMarkdownResources();
+
+        sendResponse({
+          success: true,
+          markdown,
+          markdownTitle,
+          headTitle: formattedHeadTitle,
+          attachments
+        });
+      } catch (error) {
+        console.error("Error converting to Markdown:", error);
+        sendResponse({ success: false, error: error.message });
+      }
+    })();
   } else if (request.action === "extractAllPages") {
     try {
       // Get the head title
