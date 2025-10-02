@@ -38,7 +38,6 @@ document.addEventListener('DOMContentLoaded', () => {
   let currentTitle = '';
   let currentHeadTitle = '';
   let allPages = [];
-  let baseUrl = '';
   let convertedPages = []; // Store all converted page content
   let isCancelled = false; // Flag to control cancellation
 
@@ -112,7 +111,6 @@ document.addEventListener('DOMContentLoaded', () => {
       
       if (response && response.success) {
         allPages = response.pages;
-        baseUrl = response.baseUrl;
         
         // Use head title for folder name if available
         const headTitle = sanitizeFilename(response.headTitle, { allowEmpty: true });
