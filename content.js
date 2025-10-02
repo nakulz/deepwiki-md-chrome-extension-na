@@ -194,6 +194,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     console.log("Tab activated:", window.location.href);
     // Acknowledge receipt of message to avoid connection errors
     sendResponse({ received: true });
+  } else if (request.action === "ping") {
+    sendResponse({ ready: true });
   }
   // Always return true for asynchronous sendResponse handling
   return true;

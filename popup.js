@@ -29,6 +29,95 @@ function sanitizeFilename(input, options = {}) {
   return sanitized;
 }
 
+const PAGE_READY_TIMEOUT_MS = 20000;
+const PAGE_READY_POLL_INTERVAL_MS = 300;
+
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function normalizeUrlForComparison(rawUrl) {
+  if (!rawUrl || typeof rawUrl !== 'string') {
+    return '';
+  }
+
+  try {
+    const url = new URL(rawUrl);
+    let normalizedPath = url.pathname;
+    if (normalizedPath.length > 1) {
+      normalizedPath = normalizedPath.replace(/\/+/g, '/');
+      normalizedPath = normalizedPath.replace(/\/+$/, '');
+    }
+
+    return `${url.origin}${normalizedPath}${url.search}${url.hash}`;
+  } catch (error) {
+    return rawUrl;
+  }
+}
+
+function urlsReferToSameDocument(firstUrl, secondUrl) {
+  return normalizeUrlForComparison(firstUrl) === normalizeUrlForComparison(secondUrl);
+}
+
+async function waitForPageInteractive(tabId, targetUrl) {
+  const normalizedTarget = normalizeUrlForComparison(targetUrl);
+  const startTime = Date.now();
+
+  while (Date.now() - startTime < PAGE_READY_TIMEOUT_MS) {
+    let tab;
+    try {
+      tab = await chrome.tabs.get(tabId);
+    } catch (error) {
+      if (error && error.message && error.message.includes('No tab with id')) {
+        throw error;
+      }
+      await delay(PAGE_READY_POLL_INTERVAL_MS);
+      continue;
+    }
+
+    const currentUrl = tab.url || tab.pendingUrl || '';
+    const normalizedCurrent = normalizeUrlForComparison(currentUrl);
+
+    if (normalizedCurrent === normalizedTarget) {
+      try {
+        const response = await chrome.tabs.sendMessage(tabId, { action: 'ping' });
+        if (response && response.ready) {
+          return tab;
+        }
+      } catch (error) {
+        // Ignore errors while waiting for the content script to initialize
+      }
+    }
+
+    await delay(PAGE_READY_POLL_INTERVAL_MS);
+  }
+
+  throw new Error(`Timed out waiting for page readiness: ${targetUrl}`);
+}
+
+async function ensureTabAtUrl(tabId, targetUrl, previousUrl) {
+  if (!urlsReferToSameDocument(previousUrl, targetUrl)) {
+    await chrome.tabs.update(tabId, { url: targetUrl });
+  }
+
+  return waitForPageInteractive(tabId, targetUrl);
+}
+
+async function safelyReturnToUrl(tabId, targetUrl) {
+  if (!targetUrl) {
+    return null;
+  }
+
+  try {
+    const currentTab = await chrome.tabs.get(tabId);
+    const currentUrl = currentTab.url || currentTab.pendingUrl || '';
+    return await ensureTabAtUrl(tabId, targetUrl, currentUrl);
+  } catch (error) {
+    console.error('Failed to return to original page', error);
+    return null;
+  }
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   const convertBtn = document.getElementById('convertBtn');
   const batchDownloadBtn = document.getElementById('batchDownloadBtn');
@@ -153,39 +242,41 @@ document.addEventListener('DOMContentLoaded', () => {
   async function processAllPages(tabId, folderName) {
     let processedCount = 0;
     let errorCount = 0;
-    
+
     // Save current page URL
     const currentPageUrl = allPages.find(page => page.selected)?.url || "";
-    
+    let lastVisitedUrl = currentPageUrl;
+
+    try {
+      const activeTab = await chrome.tabs.get(tabId);
+      lastVisitedUrl = activeTab.url || activeTab.pendingUrl || currentPageUrl;
+    } catch (error) {
+      lastVisitedUrl = currentPageUrl;
+    }
+
     for (const page of allPages) {
       // Check if operation was cancelled
       if (isCancelled) {
         showStatus(`Operation cancelled. Processed: ${processedCount}, Failed: ${errorCount}`, 'info');
         // Return to original page
-        if (currentPageUrl) {
-          await chrome.tabs.update(tabId, { url: currentPageUrl });
-        }
+        await safelyReturnToUrl(tabId, currentPageUrl);
         return;
       }
 
       try {
         showStatus(`Processing ${processedCount + 1}/${allPages.length}: ${page.title}`, 'info');
-        
-        // Navigate to page
-        await chrome.tabs.update(tabId, { url: page.url });
-        
-        // Wait for page to load
-        await new Promise(resolve => setTimeout(resolve, 2000)); // Increase waiting time to ensure page loads
-        
-        // Check again if cancelled during wait
+
+        // Ensure the tab has navigated and the content script is ready
+        const readyTab = await ensureTabAtUrl(tabId, page.url, lastVisitedUrl);
+        lastVisitedUrl = readyTab?.url || readyTab?.pendingUrl || page.url;
+
+        // Check again if cancelled after navigation
         if (isCancelled) {
           showStatus(`Operation cancelled. Processed: ${processedCount}, Failed: ${errorCount}`, 'info');
-          if (currentPageUrl) {
-            await chrome.tabs.update(tabId, { url: currentPageUrl });
-          }
+          await safelyReturnToUrl(tabId, currentPageUrl);
           return;
         }
-        
+
         // Convert page content
         const convertResponse = await chrome.tabs.sendMessage(tabId, { action: 'convertToMarkdown' });
         
@@ -207,14 +298,20 @@ document.addEventListener('DOMContentLoaded', () => {
       } catch (err) {
         errorCount++;
         console.error(`Error processing page: ${page.title}`, err);
+        showStatus(`Failed to process ${page.title}. Continuing...`, 'error');
+
+        try {
+          const fallbackTab = await chrome.tabs.get(tabId);
+          lastVisitedUrl = fallbackTab.url || fallbackTab.pendingUrl || lastVisitedUrl;
+        } catch (fallbackError) {
+          // Ignore - we'll rely on the last known URL
+        }
       }
     }
-    
+
     // Return to original page after processing
-    if (currentPageUrl) {
-      await chrome.tabs.update(tabId, { url: currentPageUrl });
-    }
-    
+    await safelyReturnToUrl(tabId, currentPageUrl);
+
     if (!isCancelled) {
       showStatus(`Batch conversion complete! Success: ${processedCount}, Failed: ${errorCount}, Preparing download...`, 'success');
     }
