@@ -1,11 +1,33 @@
+const FALLBACK_FILENAME = 'deepwiki-page';
+
+function sanitizeFilename(input) {
+  if (!input || typeof input !== 'string') {
+    return FALLBACK_FILENAME;
+  }
+
+  let sanitized = input
+    .normalize('NFKC')
+    .trim()
+    .replace(/\s+/g, '-');
+
+  sanitized = sanitized
+    .replace(/[\u0000-\u001F<>:"/\\|?*\u007F]/g, '-')
+    .replace(/\.\.+/g, '.')
+    .replace(/-+/g, '-')
+    .replace(/\.+/g, '.');
+
+  sanitized = sanitized.replace(/^[.-]+/, '').replace(/[.-]+$/, '');
+
+  return sanitized || FALLBACK_FILENAME;
+}
+
 // Listen for messages from popup
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === "convertToMarkdown") {
     try {
       // Get page title from head
       const headTitle = document.title || "";
-      // Format head title: replace slashes and pipes with dashes
-      const formattedHeadTitle = headTitle.replace(/[\/|]/g, '-').replace(/\s+/g, '-').replace('---','-');
+      const formattedHeadTitle = headTitle ? sanitizeFilename(headTitle) : "";
 
       // Get article title (keep unchanged)
       const title =
@@ -28,7 +50,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         document.body;
 
       let markdown = ``;
-      let markdownTitle = title.replace(/\s+/g, '-');
+      let markdownTitle = sanitizeFilename(title);
 
       contentContainer.childNodes.forEach((child) => {
         markdown += processNode(child);
@@ -50,8 +72,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     try {
       // Get the head title
       const headTitle = document.title || "";
-      // Format head title: replace slashes and pipes with dashes
-      const formattedHeadTitle = headTitle.replace(/[\/|]/g, '-').replace(/\s+/g, '-').replace('---','-');
+      const formattedHeadTitle = headTitle ? sanitizeFilename(headTitle) : "";
       
       // Get the base part of the current document path
       const baseUrl = window.location.origin;
