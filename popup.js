@@ -29,6 +29,34 @@ function sanitizeFilename(input, options = {}) {
   return sanitized;
 }
 
+function ensureMarkdownExtension(fileName) {
+  if (!fileName) {
+    return 'resource.md';
+  }
+
+  return fileName.toLowerCase().endsWith('.md') ? fileName : `${fileName}.md`;
+}
+
+function ensureUniqueName(baseName, usedNames) {
+  const normalizedBase = baseName.toLowerCase();
+  if (!usedNames.has(normalizedBase)) {
+    usedNames.add(normalizedBase);
+    return baseName;
+  }
+
+  const baseWithoutExtension = baseName.replace(/\.md$/i, '');
+  let index = 2;
+  let candidate = ensureMarkdownExtension(`${baseWithoutExtension}-${index}`);
+
+  while (usedNames.has(candidate.toLowerCase())) {
+    index += 1;
+    candidate = ensureMarkdownExtension(`${baseWithoutExtension}-${index}`);
+  }
+
+  usedNames.add(candidate.toLowerCase());
+  return candidate;
+}
+
 const PAGE_READY_TIMEOUT_MS = 20000;
 const PAGE_READY_POLL_INTERVAL_MS = 300;
 
@@ -126,6 +154,7 @@ document.addEventListener('DOMContentLoaded', () => {
   let currentMarkdown = '';
   let currentTitle = '';
   let currentHeadTitle = '';
+  let currentAttachments = [];
   let allPages = [];
   let convertedPages = []; // Store all converted page content
   let isCancelled = false; // Flag to control cancellation
@@ -140,6 +169,7 @@ document.addEventListener('DOMContentLoaded', () => {
         return;
       }
 
+      currentAttachments = [];
       showStatus('Converting page...', 'info');
       const response = await chrome.tabs.sendMessage(tab.id, { action: 'convertToMarkdown' });
       
@@ -153,23 +183,66 @@ document.addEventListener('DOMContentLoaded', () => {
 
         currentTitle = sanitizedContentTitle;
         currentHeadTitle = sanitizedHeadTitle;
+        currentAttachments = Array.isArray(response.attachments) ? response.attachments : [];
 
         const fileNameBase = sanitizedHeadTitle
           ? `${sanitizedHeadTitle}-${sanitizedContentTitle}`
           : sanitizedContentTitle;
-        const fileName = `${sanitizeFilename(fileNameBase)}.md`;
-        
-        // Automatically download after successful conversion
-        const blob = new Blob([currentMarkdown], { type: 'text/markdown' });
-        const url = URL.createObjectURL(blob);
-        
-        chrome.downloads.download({
-          url: url,
-          filename: fileName,
-          saveAs: true
-        });
-        
-        showStatus('Conversion successful! Downloading...', 'success');
+        const sanitizedFileNameBase = sanitizeFilename(fileNameBase);
+        const fileName = ensureMarkdownExtension(sanitizedFileNameBase);
+
+        if (currentAttachments.length > 0) {
+          showStatus('Conversion successful! Preparing attachment bundle...', 'info');
+
+          const usedNames = new Set();
+          const zip = new JSZip();
+          zip.file(fileName, currentMarkdown);
+          usedNames.add(fileName.toLowerCase());
+
+          const attachmentsFolder = zip.folder('attachments');
+
+          currentAttachments.forEach((attachment, index) => {
+            if (!attachment || typeof attachment.content !== 'string') {
+              return;
+            }
+
+            const rawName = sanitizeFilename(
+              attachment.fileName || attachment.displayName || `attachment-${index + 1}`
+            );
+            const candidateName = ensureMarkdownExtension(rawName || `attachment-${index + 1}`);
+            const uniqueName = ensureUniqueName(candidateName, usedNames);
+
+            attachmentsFolder.file(uniqueName, attachment.content);
+          });
+
+          const zipNameBase = fileName.replace(/\.md$/i, '');
+          const zipBlob = await zip.generateAsync({
+            type: 'blob',
+            compression: 'DEFLATE',
+            compressionOptions: { level: 9 }
+          });
+
+          const zipUrl = URL.createObjectURL(zipBlob);
+          chrome.downloads.download({
+            url: zipUrl,
+            filename: `${zipNameBase}-bundle.zip`,
+            saveAs: true
+          });
+
+          showStatus('Conversion successful! Downloading bundle...', 'success');
+        } else {
+          // Automatically download after successful conversion
+          const blob = new Blob([currentMarkdown], { type: 'text/markdown' });
+          const url = URL.createObjectURL(blob);
+
+          chrome.downloads.download({
+            url: url,
+            filename: fileName,
+            saveAs: true
+          });
+
+          showStatus('Conversion successful! Downloading...', 'success');
+        }
       } else {
         showStatus('Conversion failed: ' + (response?.error || 'Unknown error'), 'error');
       }
@@ -317,7 +390,8 @@ document.addEventListener('DOMContentLoaded', () => {
             displayTitle,
             fileTitle,
             content: convertResponse.markdown,
-            sourceUrl: page.url
+            sourceUrl: page.url,
+            attachments: Array.isArray(convertResponse.attachments) ? convertResponse.attachments : []
           });
 
           processedCount++;
@@ -359,14 +433,41 @@ document.addEventListener('DOMContentLoaded', () => {
       let indexContent = `# ${folderName}\n\n## Content Index\n\n`;
       convertedPages.forEach(page => {
         indexContent += `- [${page.displayTitle}](${page.fileTitle}.md)\n`;
+        if (Array.isArray(page.attachments) && page.attachments.length > 0) {
+          indexContent += `  - Attachments (${page.attachments.length}) stored in attachments/${page.fileTitle}/\n`;
+        }
       });
-      
+
       // Add index file to zip
       zip.file('README.md', indexContent);
-      
+
       // Add all Markdown files to zip
+      let attachmentsRoot = null;
       convertedPages.forEach(page => {
         zip.file(`${page.fileTitle}.md`, page.content);
+
+        if (!Array.isArray(page.attachments) || page.attachments.length === 0) {
+          return;
+        }
+
+        const usedNames = new Set();
+        if (!attachmentsRoot) {
+          attachmentsRoot = zip.folder('attachments');
+        }
+        const pageAttachmentFolder = attachmentsRoot.folder(page.fileTitle);
+        page.attachments.forEach((attachment, index) => {
+          if (!attachment || typeof attachment.content !== 'string') {
+            return;
+          }
+
+          const rawName = sanitizeFilename(
+            attachment.fileName || attachment.displayName || `attachment-${index + 1}`
+          );
+          const candidateName = ensureMarkdownExtension(rawName || `attachment-${index + 1}`);
+          const uniqueName = ensureUniqueName(candidateName, usedNames);
+
+          pageAttachmentFolder.file(uniqueName, attachment.content);
+        });
       });
       
       // Generate zip file
