@@ -73,22 +73,73 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       // Get the head title
       const headTitle = document.title || "";
       const formattedHeadTitle = headTitle ? sanitizeFilename(headTitle) : "";
-      
-      // Get the base part of the current document path
-      const baseUrl = window.location.origin;
-      
-      // Get all links in the sidebar
-      const sidebarLinks = Array.from(document.querySelectorAll('.border-r-border ul li a'));
-      
-      // Extract link URLs and titles
-      const pages = sidebarLinks.map(link => {
-        return {
-          url: new URL(link.getAttribute('href'), baseUrl).href,
-          title: link.textContent.trim(),
-          selected: link.getAttribute('data-selected') === 'true'
+
+      const collectSidebarLinks = () => {
+        const selectors = [
+          '.border-r-border ul li a',
+          'aside a[href]',
+          'nav a[href]',
+          '.container > div:first-child a[href]'
+        ];
+
+        const seen = new Map();
+
+        const isLikelyWikiPath = url => {
+          return /\/wiki/i.test(url.pathname) || url.href === window.location.href;
         };
-      });
-      
+
+        const markSelected = link => {
+          return (
+            link.getAttribute('data-selected') === 'true' ||
+            link.getAttribute('aria-current') === 'page' ||
+            link.getAttribute('aria-selected') === 'true' ||
+            link.classList.contains('text-primary') ||
+            link.classList.contains('active')
+          );
+        };
+
+        selectors.forEach(selector => {
+          document.querySelectorAll(selector).forEach(link => {
+            const href = link.getAttribute('href');
+            if (!href) {
+              return;
+            }
+
+            let url;
+            try {
+              url = new URL(href, window.location.href);
+            } catch (err) {
+              return;
+            }
+
+            if (url.origin !== window.location.origin) {
+              return;
+            }
+
+            if (!isLikelyWikiPath(url)) {
+              return;
+            }
+
+            const key = url.href;
+
+            if (!seen.has(key)) {
+              seen.set(key, {
+                url: key,
+                title: (link.textContent || '').trim() || url.pathname,
+                selected: markSelected(link)
+              });
+            } else if (!seen.get(key).selected) {
+              seen.get(key).selected = markSelected(link);
+            }
+          });
+        });
+
+        return Array.from(seen.values());
+      };
+
+      // Get all links in the sidebar
+      let pages = collectSidebarLinks();
+
       // Get current page information for return
       const currentPageTitle =
         document
@@ -101,12 +152,31 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           ?.textContent?.trim() ||
         document.querySelector("h1")?.textContent?.trim() ||
         "Untitled";
-        
-      sendResponse({ 
-        success: true, 
-        pages: pages, 
+
+      if (!pages.length) {
+        pages = [
+          {
+            url: window.location.href,
+            title: currentPageTitle,
+            selected: true
+          }
+        ];
+      } else {
+        const currentHref = window.location.href;
+        const hasCurrentPage = pages.some(page => page.url === currentHref);
+        if (!hasCurrentPage) {
+          pages.unshift({
+            url: currentHref,
+            title: currentPageTitle,
+            selected: true
+          });
+        }
+      }
+
+      sendResponse({
+        success: true,
+        pages: pages,
         currentTitle: currentPageTitle,
-        baseUrl: baseUrl,
         headTitle: formattedHeadTitle
       });
     } catch (error) {
