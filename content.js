@@ -74,14 +74,30 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       const headTitle = document.title || "";
       const formattedHeadTitle = headTitle ? sanitizeFilename(headTitle) : "";
 
-      const collectSidebarLinks = () => {
-        const selectors = [
+      const collectWikiLinks = () => {
+        const navSelectors = [
           '.border-r-border ul li a',
           'aside a[href]',
           'nav a[href]',
           '.container > div:first-child a[href]'
         ];
 
+        const contentSelectors = [
+          '.container > div:nth-child(2) .prose a[href]',
+          '.container > div:nth-child(2) .prose-custom a[href]',
+          '.container > div:nth-child(2) a[href]',
+          'main a[href]'
+        ];
+
+        const normalizePath = path => {
+          if (!path) {
+            return '/';
+          }
+
+          return path.replace(/\/+$/, '').replace(/\/+/g, '/');
+        };
+
+        const results = [];
         const seen = new Map();
 
         const isLikelyWikiPath = url => {
@@ -98,47 +114,119 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           );
         };
 
-        selectors.forEach(selector => {
-          document.querySelectorAll(selector).forEach(link => {
-            const href = link.getAttribute('href');
-            if (!href) {
-              return;
+        const isCurrentPageUrl = url => {
+          const currentUrl = new URL(window.location.href);
+          return (
+            url.origin === currentUrl.origin &&
+            normalizePath(url.pathname) === normalizePath(currentUrl.pathname) &&
+            url.search === currentUrl.search
+          );
+        };
+
+        const deriveTitleFromUrl = url => {
+          if (url.hash) {
+            const hashTitle = decodeURIComponent(url.hash.replace(/^#/, '').replace(/[-_]+/g, ' ')).trim();
+            if (hashTitle) {
+              return hashTitle;
+            }
+          }
+
+          const segments = url.pathname.split('/').filter(Boolean);
+          const lastSegment = segments[segments.length - 1] || '';
+          const decodedSegment = decodeURIComponent(lastSegment.replace(/[-_]+/g, ' ')).trim();
+
+          if (decodedSegment) {
+            return decodedSegment;
+          }
+
+          return url.href;
+        };
+
+        const getLinkTitle = link => {
+          const text = (link.textContent || '').trim();
+          if (text) {
+            return text;
+          }
+
+          const ariaLabel = link.getAttribute('aria-label');
+          if (ariaLabel && ariaLabel.trim()) {
+            return ariaLabel.trim();
+          }
+
+          const titleAttr = link.getAttribute('title');
+          if (titleAttr && titleAttr.trim()) {
+            return titleAttr.trim();
+          }
+
+          return '';
+        };
+
+        const recordLink = (link, { treatAsNav } = {}) => {
+          const href = link.getAttribute('href');
+          if (!href || href.startsWith('javascript:')) {
+            return;
+          }
+
+          let url;
+          try {
+            url = new URL(href, window.location.href);
+          } catch (err) {
+            return;
+          }
+
+          if (url.origin !== window.location.origin) {
+            return;
+          }
+
+          if (!isLikelyWikiPath(url)) {
+            return;
+          }
+
+          const key = url.href;
+          const linkTitle = getLinkTitle(link);
+          const fallbackTitle = deriveTitleFromUrl(url);
+          const isCurrent = isCurrentPageUrl(url);
+          const matchesCurrentHash = (url.hash || '') === (window.location.hash || '');
+          const selected = markSelected(link) || (isCurrent && matchesCurrentHash);
+
+          if (!seen.has(key)) {
+            const entry = {
+              url: key,
+              title: linkTitle || fallbackTitle,
+              selected: treatAsNav ? selected : (isCurrent && matchesCurrentHash),
+              fallbackTitle
+            };
+
+            seen.set(key, entry);
+            results.push(entry);
+          } else {
+            const existing = seen.get(key);
+
+            const shouldSelect = treatAsNav ? selected : (isCurrent && matchesCurrentHash);
+
+            if (!existing.selected && shouldSelect) {
+              existing.selected = true;
             }
 
-            let url;
-            try {
-              url = new URL(href, window.location.href);
-            } catch (err) {
-              return;
+            if (linkTitle && existing.title === existing.fallbackTitle) {
+              existing.title = linkTitle;
             }
+          }
+        };
 
-            if (url.origin !== window.location.origin) {
-              return;
-            }
-
-            if (!isLikelyWikiPath(url)) {
-              return;
-            }
-
-            const key = url.href;
-
-            if (!seen.has(key)) {
-              seen.set(key, {
-                url: key,
-                title: (link.textContent || '').trim() || url.pathname,
-                selected: markSelected(link)
-              });
-            } else if (!seen.get(key).selected) {
-              seen.get(key).selected = markSelected(link);
-            }
-          });
+        navSelectors.forEach(selector => {
+          document.querySelectorAll(selector).forEach(link => recordLink(link, { treatAsNav: true }));
         });
 
-        return Array.from(seen.values());
+        contentSelectors.forEach(selector => {
+          document.querySelectorAll(selector).forEach(link => recordLink(link, { treatAsNav: false }));
+        });
+
+        return results.map(({ fallbackTitle, ...rest }) => rest);
       };
 
-      // Get all links in the sidebar
-      let pages = collectSidebarLinks();
+      // Get all wiki links available on the page
+      let pages = collectWikiLinks();
 
       // Get current page information for return
       const currentPageTitle =

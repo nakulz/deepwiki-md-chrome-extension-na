@@ -242,6 +242,29 @@ document.addEventListener('DOMContentLoaded', () => {
   async function processAllPages(tabId, folderName) {
     let processedCount = 0;
     let errorCount = 0;
+    const usedFileTitles = new Set();
+
+    const ensureUniqueFileTitle = (baseTitle, index) => {
+      let candidate = sanitizeFilename(baseTitle || `page-${index}`);
+      if (!candidate) {
+        candidate = `page-${index}`;
+      }
+
+      if (!usedFileTitles.has(candidate)) {
+        usedFileTitles.add(candidate);
+        return candidate;
+      }
+
+      let suffix = 2;
+      let uniqueCandidate = `${candidate}-${suffix}`;
+      while (usedFileTitles.has(uniqueCandidate)) {
+        suffix += 1;
+        uniqueCandidate = `${candidate}-${suffix}`;
+      }
+
+      usedFileTitles.add(uniqueCandidate);
+      return uniqueCandidate;
+    };
 
     // Save current page URL
     const currentPageUrl = allPages.find(page => page.selected)?.url || "";
@@ -281,15 +304,22 @@ document.addEventListener('DOMContentLoaded', () => {
         const convertResponse = await chrome.tabs.sendMessage(tabId, { action: 'convertToMarkdown' });
         
         if (convertResponse && convertResponse.success) {
+          const displayTitle = page.title || convertResponse.markdownTitle || `Page ${processedCount + 1}`;
+          const preferredFileTitle =
+            page.title && page.title.trim()
+              ? page.title
+              : convertResponse.markdownTitle || convertResponse.currentTitle || displayTitle;
+
+          const fileTitle = ensureUniqueFileTitle(preferredFileTitle, processedCount + 1);
+
           // Store converted content
           convertedPages.push({
-            displayTitle: page.title,
-            fileTitle: sanitizeFilename(
-              convertResponse.markdownTitle || page.title
-            ),
-            content: convertResponse.markdown
+            displayTitle,
+            fileTitle,
+            content: convertResponse.markdown,
+            sourceUrl: page.url
           });
-          
+
           processedCount++;
         } else {
           errorCount++;
