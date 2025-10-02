@@ -1,3 +1,32 @@
+const FALLBACK_FILENAME = 'deepwiki-page';
+
+function sanitizeFilename(input, options = {}) {
+  const { allowEmpty = false } = options;
+
+  if (!input || typeof input !== 'string') {
+    return allowEmpty ? '' : FALLBACK_FILENAME;
+  }
+
+  let sanitized = input
+    .normalize('NFKC')
+    .trim()
+    .replace(/\s+/g, '-');
+
+  sanitized = sanitized
+    .replace(/[\u0000-\u001F<>:"/\\|?*\u007F]/g, '-')
+    .replace(/\.\.+/g, '.')
+    .replace(/-+/g, '-')
+    .replace(/\.+/g, '.');
+
+  sanitized = sanitized.replace(/^[.-]+/, '').replace(/[.-]+$/, '');
+
+  if (!sanitized) {
+    return allowEmpty ? '' : FALLBACK_FILENAME;
+  }
+
+  return sanitized;
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   const convertBtn = document.getElementById('convertBtn');
   const batchDownloadBtn = document.getElementById('batchDownloadBtn');
@@ -26,13 +55,19 @@ document.addEventListener('DOMContentLoaded', () => {
       
       if (response && response.success) {
         currentMarkdown = response.markdown;
-        currentTitle = response.markdownTitle;
-        currentHeadTitle = response.headTitle || '';
-        
-        // Create filename with head title and content title
-        const fileName = currentHeadTitle 
-          ? `${currentHeadTitle}-${currentTitle}.md` 
-          : `${currentTitle}.md`;
+
+        const sanitizedHeadTitle = sanitizeFilename(response.headTitle, { allowEmpty: true });
+        const sanitizedContentTitle = sanitizeFilename(
+          response.markdownTitle || response.currentTitle || ''
+        );
+
+        currentTitle = sanitizedContentTitle;
+        currentHeadTitle = sanitizedHeadTitle;
+
+        const fileNameBase = sanitizedHeadTitle
+          ? `${sanitizedHeadTitle}-${sanitizedContentTitle}`
+          : sanitizedContentTitle;
+        const fileName = `${sanitizeFilename(fileNameBase)}.md`;
         
         // Automatically download after successful conversion
         const blob = new Blob([currentMarkdown], { type: 'text/markdown' });
@@ -78,8 +113,9 @@ document.addEventListener('DOMContentLoaded', () => {
         baseUrl = response.baseUrl;
         
         // Use head title for folder name if available
-        const headTitle = response.headTitle || '';
-        const folderName = headTitle || response.currentTitle.replace(/\s+/g, '-');
+        const headTitle = sanitizeFilename(response.headTitle, { allowEmpty: true });
+        const fallbackFolderName = sanitizeFilename(response.currentTitle || '');
+        const folderName = headTitle || fallbackFolderName;
         
         // Clear previous conversion results
         convertedPages = [];
@@ -156,7 +192,10 @@ document.addEventListener('DOMContentLoaded', () => {
         if (convertResponse && convertResponse.success) {
           // Store converted content
           convertedPages.push({
-            title: convertResponse.markdownTitle || page.title.replace(/\s+/g, '-'),
+            displayTitle: page.title,
+            fileTitle: sanitizeFilename(
+              convertResponse.markdownTitle || page.title
+            ),
             content: convertResponse.markdown
           });
           
@@ -192,7 +231,7 @@ document.addEventListener('DOMContentLoaded', () => {
       // Create index file
       let indexContent = `# ${folderName}\n\n## Content Index\n\n`;
       convertedPages.forEach(page => {
-        indexContent += `- [${page.title}](${page.title}.md)\n`;
+        indexContent += `- [${page.displayTitle}](${page.fileTitle}.md)\n`;
       });
       
       // Add index file to zip
@@ -200,7 +239,7 @@ document.addEventListener('DOMContentLoaded', () => {
       
       // Add all Markdown files to zip
       convertedPages.forEach(page => {
-        zip.file(`${page.title}.md`, page.content);
+        zip.file(`${page.fileTitle}.md`, page.content);
       });
       
       // Generate zip file
@@ -215,7 +254,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const zipUrl = URL.createObjectURL(zipContent);
       chrome.downloads.download({
         url: zipUrl,
-        filename: `${folderName}.zip`,
+        filename: `${sanitizeFilename(folderName)}.zip`,
         saveAs: true
       }, () => {
         if (chrome.runtime.lastError) {
