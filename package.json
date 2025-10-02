@@ -1,0 +1,9 @@
+{
+  "name": "deepwiki-md-chrome-extension-na",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node test/run-tests.js"
+  }
+}

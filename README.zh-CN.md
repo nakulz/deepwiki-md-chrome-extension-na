@@ -16,7 +16,7 @@
 
 ## 功能特点
 
-1. 将 DeepWiki 网站的单页内容转换为 Markdown 格式
+1. 将 DeepWiki 或 Devin wiki 页面内容转换为 Markdown 格式
 2. 一键批量转换和下载文档的所有子页面（打包为 ZIP 文件）
 3. 会保存文档中的 UML 图
 
@@ -25,13 +25,13 @@
 ![](./images/UI.png)
 
 1. 单页转换：
-   - 打开任意 DeepWiki 页面，例如：[ThinkInAIXYZ/go-mcp](https://deepwiki.com/ThinkInAIXYZ/go-mcp)
+   - 打开任意 DeepWiki 或 Devin wiki 页面，例如：[ThinkInAIXYZ/go-mcp](https://deepwiki.com/ThinkInAIXYZ/go-mcp)
    - 点击扩展图标
    - 点击"Convert & Download Current Page"按钮
    - 页面将被转换，并弹出下载对话框
 
 2. 批量下载所有页面：
-   - 打开任意 DeepWiki 页面，例如：[ThinkInAIXYZ/go-mcp](https://deepwiki.com/ThinkInAIXYZ/go-mcp)
+   - 打开任意 DeepWiki 或 Devin wiki 页面，例如：[ThinkInAIXYZ/go-mcp](https://deepwiki.com/ThinkInAIXYZ/go-mcp)
    - 点击扩展图标
    - 点击"Batch Convert & Download All Pages"按钮
    - 扩展将自动转换所有页面内容并打包成 ZIP 文件供下载
