@@ -264,6 +264,69 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           );
         };
 
+        const getPathSegments = urlString => {
+          try {
+            const parsed = typeof urlString === 'string'
+              ? new URL(urlString, window.location.href)
+              : urlString;
+
+            const targetUrl = parsed instanceof URL ? parsed : new URL(String(parsed));
+            return targetUrl.pathname.split('/').filter(Boolean);
+          } catch (error) {
+            return [];
+          }
+        };
+
+        const deriveNamespaceSegments = entries => {
+          if (!Array.isArray(entries) || !entries.length) {
+            return [];
+          }
+
+          const normalizeSegments = segments =>
+            segments.map(segment => segment.toLowerCase());
+
+          const currentSegments = getPathSegments(window.location.href);
+
+          const selectedEntry = entries.find(entry => entry && entry.selected);
+          const selectedSegments = selectedEntry ? getPathSegments(selectedEntry.url) : [];
+
+          const candidateSegments = selectedSegments.length
+            ? selectedSegments
+            : currentSegments;
+
+          if (candidateSegments.length <= 1) {
+            return [];
+          }
+
+          // Assume final segment is the specific page and anything before it is the namespace
+          const namespaceSegments = candidateSegments.slice(0, -1);
+          return normalizeSegments(namespaceSegments);
+        };
+
+        const matchesNamespace = (entry, namespaceSegments) => {
+          if (!namespaceSegments || !namespaceSegments.length) {
+            return true;
+          }
+
+          if (!entry || !entry.url) {
+            return false;
+          }
+
+          const entrySegments = getPathSegments(entry.url).map(segment => segment.toLowerCase());
+
+          if (entrySegments.length < namespaceSegments.length) {
+            return false;
+          }
+
+          for (let i = 0; i < namespaceSegments.length; i += 1) {
+            if (entrySegments[i] !== namespaceSegments[i]) {
+              return false;
+            }
+          }
+
+          return true;
+        };
+
         const deriveTitleFromUrl = url => {
           if (url.hash) {
             const hashTitle = decodeURIComponent(url.hash.replace(/^#/, '').replace(/[-_]+/g, ' ')).trim();
