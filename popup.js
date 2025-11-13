@@ -57,6 +57,40 @@ function ensureUniqueName(baseName, usedNames) {
   return candidate;
 }
 
+async function ensureContentScriptInjected(tabId) {
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      files: ['content.js']
+    });
+    await delay(100);
+  } catch (error) {
+    if (error?.message?.includes('Cannot access contents of url')) {
+      throw new Error('Cannot access page contents. Please refresh and try again.');
+    }
+    throw error;
+  }
+}
+
+async function sendMessageToTab(tabId, message, options = {}) {
+  const { retryOnMissingReceiver = true } = options;
+
+  try {
+    return await chrome.tabs.sendMessage(tabId, message);
+  } catch (error) {
+    const missingReceiver =
+      error?.message?.includes('Receiving end does not exist') ||
+      error?.message?.includes('The message port closed before a response was received.');
+
+    if (retryOnMissingReceiver && missingReceiver) {
+      await ensureContentScriptInjected(tabId);
+      return chrome.tabs.sendMessage(tabId, message);
+    }
+
+    throw error;
+  }
+}
+
 const PAGE_READY_TIMEOUT_MS = 20000;
 const PAGE_READY_POLL_INTERVAL_MS = 300;
 
@@ -108,7 +142,7 @@ async function waitForPageInteractive(tabId, targetUrl) {
 
     if (normalizedCurrent === normalizedTarget) {
       try {
-        const response = await chrome.tabs.sendMessage(tabId, { action: 'ping' });
+        const response = await sendMessageToTab(tabId, { action: 'ping' });
         if (response && response.ready) {
           return tab;
         }
@@ -171,7 +205,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
       currentAttachments = [];
       showStatus('Converting page...', 'info');
-      const response = await chrome.tabs.sendMessage(tab.id, { action: 'convertToMarkdown' });
+        const response = await sendMessageToTab(tab.id, { action: 'convertToMarkdown' });
       
       if (response && response.success) {
         currentMarkdown = response.markdown;
@@ -269,7 +303,7 @@ document.addEventListener('DOMContentLoaded', () => {
       showStatus('Extracting all page links...', 'info');
       
       // Extract all links first
-      const response = await chrome.tabs.sendMessage(tab.id, { action: 'extractAllPages' });
+      const response = await sendMessageToTab(tab.id, { action: 'extractAllPages' });
       
       if (response && response.success) {
         allPages = response.pages;
@@ -374,7 +408,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         // Convert page content
-        const convertResponse = await chrome.tabs.sendMessage(tabId, { action: 'convertToMarkdown' });
+        const convertResponse = await sendMessageToTab(tabId, { action: 'convertToMarkdown' });
         
         if (convertResponse && convertResponse.success) {
           const displayTitle = page.title || convertResponse.markdownTitle || `Page ${processedCount + 1}`;
