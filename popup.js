@@ -57,6 +57,40 @@ function ensureUniqueName(baseName, usedNames) {
   return candidate;
 }
 
+async function ensureContentScriptInjected(tabId) {
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      files: ['content.js']
+    });
+    await delay(100);
+  } catch (error) {
+    if (error?.message?.includes('Cannot access contents of url')) {
+      throw new Error('Cannot access page contents. Please refresh and try again.');
+    }
+    throw error;
+  }
+}
+
+async function sendMessageToTab(tabId, message, options = {}) {
+  const { retryOnMissingReceiver = true } = options;
+
+  try {
+    return await chrome.tabs.sendMessage(tabId, message);
+  } catch (error) {
+    const missingReceiver =
+      error?.message?.includes('Receiving end does not exist') ||
+      error?.message?.includes('The message port closed before a response was received.');
+
+    if (retryOnMissingReceiver && missingReceiver) {
+      await ensureContentScriptInjected(tabId);
+      return chrome.tabs.sendMessage(tabId, message);
+    }
+
+    throw error;
+  }
+}
+
 const PAGE_READY_TIMEOUT_MS = 20000;
 const PAGE_READY_POLL_INTERVAL_MS = 300;
 
@@ -87,8 +121,23 @@ function urlsReferToSameDocument(firstUrl, secondUrl) {
   return normalizeUrlForComparison(firstUrl) === normalizeUrlForComparison(secondUrl);
 }
 
-async function waitForPageInteractive(tabId, targetUrl) {
+function shareSameOrigin(firstUrl, secondUrl) {
+  if (!firstUrl || !secondUrl) {
+    return false;
+  }
+
+  try {
+    const first = new URL(firstUrl);
+    const second = new URL(secondUrl);
+    return first.origin === second.origin;
+  } catch (error) {
+    return false;
+  }
+}
+
+async function waitForPageInteractive(tabId, targetUrl, previousUrl) {
   const normalizedTarget = normalizeUrlForComparison(targetUrl);
+  const normalizedPrevious = normalizeUrlForComparison(previousUrl);
   const startTime = Date.now();
 
   while (Date.now() - startTime < PAGE_READY_TIMEOUT_MS) {
@@ -106,15 +155,42 @@ async function waitForPageInteractive(tabId, targetUrl) {
     const currentUrl = tab.url || tab.pendingUrl || '';
     const normalizedCurrent = normalizeUrlForComparison(currentUrl);
 
-    if (normalizedCurrent === normalizedTarget) {
-      try {
-        const response = await chrome.tabs.sendMessage(tabId, { action: 'ping' });
-        if (response && response.ready) {
-          return tab;
-        }
-      } catch (error) {
-        // Ignore errors while waiting for the content script to initialize
-      }
+    let isContentReady = false;
+    try {
+      const response = await sendMessageToTab(tabId, { action: 'ping' });
+      isContentReady = Boolean(response && response.ready);
+    } catch (error) {
+      // Ignore errors while the content script is still loading
+    }
+
+    if (!isContentReady) {
+      await delay(PAGE_READY_POLL_INTERVAL_MS);
+      continue;
+    }
+
+    if (!normalizedTarget || normalizedCurrent === normalizedTarget) {
+      return tab;
+    }
+
+    const previousMatchesCurrent = Boolean(
+      normalizedPrevious && normalizedCurrent && normalizedCurrent === normalizedPrevious
+    );
+
+    const resolvedToDifferentWikiDoc = Boolean(
+      normalizedTarget &&
+        normalizedCurrent &&
+        normalizedCurrent !== normalizedTarget &&
+        !previousMatchesCurrent &&
+        shareSameOrigin(currentUrl, targetUrl) &&
+        isSupportedWikiUrl(currentUrl)
+    );
+
+    if (resolvedToDifferentWikiDoc) {
+      console.warn(
+        'Navigation resolved to a different wiki URL than requested. Continuing with actual page.',
+        { requested: targetUrl, resolved: currentUrl }
+      );
+      return tab;
     }
 
     await delay(PAGE_READY_POLL_INTERVAL_MS);
@@ -128,7 +204,7 @@ async function ensureTabAtUrl(tabId, targetUrl, previousUrl) {
     await chrome.tabs.update(tabId, { url: targetUrl });
   }
 
-  return waitForPageInteractive(tabId, targetUrl);
+  return waitForPageInteractive(tabId, targetUrl, previousUrl);
 }
 
 async function safelyReturnToUrl(tabId, targetUrl) {
@@ -171,7 +247,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
       currentAttachments = [];
       showStatus('Converting page...', 'info');
-      const response = await chrome.tabs.sendMessage(tab.id, { action: 'convertToMarkdown' });
+        const response = await sendMessageToTab(tab.id, { action: 'convertToMarkdown' });
       
       if (response && response.success) {
         currentMarkdown = response.markdown;
@@ -269,7 +345,7 @@ document.addEventListener('DOMContentLoaded', () => {
       showStatus('Extracting all page links...', 'info');
       
       // Extract all links first
-      const response = await chrome.tabs.sendMessage(tab.id, { action: 'extractAllPages' });
+      const response = await sendMessageToTab(tab.id, { action: 'extractAllPages' });
       
       if (response && response.success) {
         allPages = response.pages;
@@ -374,7 +450,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         // Convert page content
-        const convertResponse = await chrome.tabs.sendMessage(tabId, { action: 'convertToMarkdown' });
+        const convertResponse = await sendMessageToTab(tabId, { action: 'convertToMarkdown' });
         
         if (convertResponse && convertResponse.success) {
           const displayTitle = page.title || convertResponse.markdownTitle || `Page ${processedCount + 1}`;

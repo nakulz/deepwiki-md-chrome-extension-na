@@ -221,8 +221,106 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         const results = [];
         const seen = new Map();
 
+        const currentUrl = new URL(window.location.href);
+        const currentHost = currentUrl.hostname.toLowerCase();
+        const isDeepWikiHost = currentHost.endsWith('deepwiki.com');
+        const isDevinHost = currentHost.endsWith('app.devin.ai');
+        const disallowedExactPaths = new Set([
+          '/login',
+          '/logout',
+          '/signin',
+          '/sign-in',
+          '/signout',
+          '/sign-out',
+          '/auth/login',
+          '/auth/logout'
+        ]);
+
+        const namespaceEntriesFrom = entries => {
+          const navEntries = entries.filter(entry => entry.source === 'nav');
+          return navEntries.length ? navEntries : entries;
+        };
+
+        const deriveNamespaceSegments = entries => {
+          const candidates = namespaceEntriesFrom(entries)
+            .map(entry => {
+              try {
+                const entryUrl = new URL(entry.url);
+                return normalizePath(entryUrl.pathname)
+                  .split('/')
+                  .filter(Boolean);
+              } catch (error) {
+                return [];
+              }
+            })
+            .filter(segments => segments.length > 0);
+
+          if (!candidates.length) {
+            return [];
+          }
+
+          let prefix = candidates[0].slice();
+          for (let i = 1; i < candidates.length && prefix.length; i += 1) {
+            const segments = candidates[i];
+            let matchLength = 0;
+            while (
+              matchLength < prefix.length &&
+              matchLength < segments.length &&
+              prefix[matchLength] === segments[matchLength]
+            ) {
+              matchLength += 1;
+            }
+
+            prefix = prefix.slice(0, matchLength);
+          }
+
+          return prefix;
+        };
+
+        const matchesNamespace = (entry, namespaceSegments) => {
+          if (!namespaceSegments.length) {
+            return true;
+          }
+
+          try {
+            const entryUrl = new URL(entry.url);
+            const entrySegments = normalizePath(entryUrl.pathname)
+              .split('/')
+              .filter(Boolean);
+
+            if (entrySegments.length < namespaceSegments.length) {
+              return false;
+            }
+
+            return namespaceSegments.every((segment, index) => entrySegments[index] === segment);
+          } catch (error) {
+            return false;
+          }
+        };
+
         const isLikelyWikiPath = url => {
-          return /\/wiki/i.test(url.pathname) || url.href === window.location.href;
+          const targetPath = (url.pathname || '').toLowerCase();
+          const normalizedTargetPath = normalizePath(url.pathname);
+
+          if (disallowedExactPaths.has(normalizedTargetPath)) {
+            return false;
+          }
+
+          if (isDeepWikiHost) {
+            const disallowedPrefixes = ['/api', '/_next', '/static', '/auth'];
+            if (disallowedPrefixes.some(prefix => targetPath.startsWith(prefix))) {
+              return false;
+            }
+
+            const looksLikeAsset = /\.[a-z0-9]+$/i.test(targetPath);
+            return !looksLikeAsset;
+          }
+
+          if (isDevinHost) {
+            return targetPath.startsWith('/wiki');
+          }
+
+          return url.href === window.location.href;
         };
 
         const markSelected = link => {
@@ -315,7 +413,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
               url: key,
               title: linkTitle || fallbackTitle,
               selected: treatAsNav ? selected : (isCurrent && matchesCurrentHash),
-              fallbackTitle
+              fallbackTitle,
+              source: treatAsNav ? 'nav' : 'content'
             };
 
             seen.set(key, entry);
@@ -343,7 +442,17 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           document.querySelectorAll(selector).forEach(link => recordLink(link, { treatAsNav: false }));
         });
 
-        return results.map(({ fallbackTitle, ...rest }) => rest);
+        const namespaceSegments = deriveNamespaceSegments(results);
+        let filteredResults = results;
+
+        if (namespaceSegments.length) {
+          const scopedEntries = results.filter(entry => matchesNamespace(entry, namespaceSegments));
+          if (scopedEntries.length) {
+            filteredResults = scopedEntries;
+          }
+        }
+
+        return filteredResults.map(({ fallbackTitle, source, ...rest }) => rest);
       };
 
       // Get all wiki links available on the page
