@@ -221,8 +221,28 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         const results = [];
         const seen = new Map();
 
+        const currentHost = window.location.hostname.toLowerCase();
+        const isDeepWikiHost = currentHost.endsWith('deepwiki.com');
+        const isDevinHost = currentHost.endsWith('app.devin.ai');
+
         const isLikelyWikiPath = url => {
-          return /\/wiki/i.test(url.pathname) || url.href === window.location.href;
+          const targetPath = (url.pathname || '').toLowerCase();
+
+          if (isDeepWikiHost) {
+            const disallowedPrefixes = ['/api', '/_next', '/static', '/auth'];
+            if (disallowedPrefixes.some(prefix => targetPath.startsWith(prefix))) {
+              return false;
+            }
+
+            const looksLikeAsset = /\.[a-z0-9]+$/i.test(targetPath);
+            return !looksLikeAsset;
+          }
+
+          if (isDevinHost) {
+            return targetPath.startsWith('/wiki');
+          }
+
+          return url.href === window.location.href;
         };
 
         const markSelected = link => {
