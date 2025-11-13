@@ -1,4 +1,12 @@
-const FALLBACK_FILENAME = 'deepwiki-page';
+(() => {
+  if (window.__deepwikiContentScriptLoaded__) {
+    console.debug('DeepWiki content script already initialized. Skipping re-injection.');
+    return;
+  }
+
+  window.__deepwikiContentScriptLoaded__ = true;
+
+  const FALLBACK_FILENAME = 'deepwiki-page';
 
 function sanitizeFilename(input) {
   if (!input || typeof input !== 'string') {
@@ -137,7 +145,7 @@ async function fetchMarkdownResources() {
 }
 
 // Listen for messages from popup
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === "convertToMarkdown") {
     (async () => {
       try {
@@ -502,7 +510,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
   // Always return true for asynchronous sendResponse handling
   return true;
-});
+  });
 // Function for Flowchart (ensure this exists from previous responses)
 function convertFlowchartSvgToMermaidText(svgElement) {
   if (!svgElement) return null;
@@ -2304,3 +2312,4 @@ function detectCodeLanguage(codeText) {
 
 // Notify the background script that the content script is ready
 chrome.runtime.sendMessage({ action: "contentScriptReady" });
+})();
