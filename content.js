@@ -836,6 +836,36 @@ function convertMermaidSvgElement(svgElement) {
   return mermaidOutput;
 }
 
+function convertSvgElementToDataImageMarkdown(svgElement) {
+  if (!svgElement) {
+    return null;
+  }
+
+  try {
+    const serializer = new XMLSerializer();
+    const svgString = serializer.serializeToString(svgElement);
+
+    if (!svgString || !svgString.trim()) {
+      return null;
+    }
+
+    const encodedSvg = window.btoa(unescape(encodeURIComponent(svgString)));
+    const dataUri = `data:image/svg+xml;base64,${encodedSvg}`;
+
+    const title =
+      svgElement.getAttribute('aria-label') ||
+      svgElement.getAttribute('aria-roledescription') ||
+      svgElement.getAttribute('title') ||
+      svgElement.getAttribute('data-title') ||
+      'Diagram';
+
+    return `![${title.trim()}](${dataUri})`;
+  } catch (error) {
+    console.warn('Failed to serialize SVG element', error);
+    return null;
+  }
+}
+
 // Function for Class Diagram (ensure this exists from previous responses)
 function convertClassDiagramSvgToMermaidText(svgElement) {
   if (!svgElement) return null;
@@ -1914,6 +1944,11 @@ function processNode(node) {
         const mermaidOutput = convertMermaidSvgElement(element);
         if (mermaidOutput) {
           resultMd = `\n${mermaidOutput}\n\n`;
+          break;
+        }
+        const svgImageMarkdown = convertSvgElementToDataImageMarkdown(element);
+        if (svgImageMarkdown) {
+          resultMd = `${svgImageMarkdown}\n\n`;
           break;
         }
         resultMd = "";
