@@ -15,36 +15,22 @@ import { isSupportedWikiUrl } from './utils/urlUtils.js';
 // A queue to hold messages for tabs that are not yet ready
 const messageQueue = {};
 const batchJobs = new Map();
-const downloadBlobUrls = new Map();
 
-function trackDownloadBlobUrl(downloadId, blobUrl) {
-  if (typeof downloadId === 'number' && blobUrl) {
-    downloadBlobUrls.set(downloadId, blobUrl);
-    return;
+function arrayBufferToBase64(arrayBuffer) {
+  if (!arrayBuffer) {
+    return '';
   }
 
-  if (blobUrl) {
-    try {
-      URL.revokeObjectURL(blobUrl);
-    } catch (error) {
-      console.warn('Failed to revoke blob URL', error);
-    }
-  }
-}
+  const bytes = new Uint8Array(arrayBuffer);
+  const chunkSize = 0x8000;
+  let binary = '';
 
-function releaseBlobUrlForDownload(downloadId) {
-  if (!downloadBlobUrls.has(downloadId)) {
-    return;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    const chunk = bytes.subarray(i, i + chunkSize);
+    binary += String.fromCharCode(...chunk);
   }
 
-  const blobUrl = downloadBlobUrls.get(downloadId);
-  downloadBlobUrls.delete(downloadId);
-
-  try {
-    URL.revokeObjectURL(blobUrl);
-  } catch (error) {
-    console.warn('Failed to revoke blob URL for download', error);
-  }
+  return btoa(binary);
 }
 
 // Function to safely send a message to a tab, queuing if necessary
@@ -335,8 +321,8 @@ async function downloadJobZip(job) {
   });
 
   updateJobStatus(job, 'Compressing files...', 'info', { running: true });
-  const zipContent = await zip.generateAsync({
-    type: 'blob',
+  const zipBuffer = await zip.generateAsync({
+    type: 'arraybuffer',
     compression: 'DEFLATE',
     compressionOptions: { level: 9 }
   });
@@ -345,38 +331,31 @@ async function downloadJobZip(job) {
     return;
   }
 
-    const zipUrl = URL.createObjectURL(zipContent);
+  const zipDataUrl = `data:application/zip;base64,${arrayBufferToBase64(zipBuffer)}`;
 
-    try {
-      const downloadId = await new Promise((resolve, reject) => {
-        chrome.downloads.download(
-          {
-            url: zipUrl,
-            filename: `${sanitizeFilename(job.folderName || 'deepwiki-export')}.zip`,
-            saveAs: true
-          },
-          downloadId => {
-            if (chrome.runtime.lastError) {
-              reject(new Error(chrome.runtime.lastError.message));
-              return;
-            }
+  await new Promise((resolve, reject) => {
+    chrome.downloads.download(
+      {
+        url: zipDataUrl,
+        filename: `${sanitizeFilename(job.folderName || 'deepwiki-export')}.zip`,
+        saveAs: true
+      },
+      downloadId => {
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message));
+          return;
+        }
 
-            if (typeof downloadId !== 'number') {
-              reject(new Error('Failed to initiate download'));
-              return;
-            }
+        if (typeof downloadId !== 'number') {
+          reject(new Error('Failed to initiate download'));
+          return;
+        }
 
-            resolve(downloadId);
-          }
-        );
-      });
-
-      trackDownloadBlobUrl(downloadId, zipUrl);
-    } catch (error) {
-      trackDownloadBlobUrl(null, zipUrl);
-      throw error;
-    }
-  }
+        resolve(downloadId);
+      }
+    );
+  });
+}
 
 // Listen for extension installation event
 chrome.runtime.onInstalled.addListener(() => {
@@ -495,13 +474,3 @@ chrome.tabs.onRemoved.addListener(tabId => {
   }
 });
 
-chrome.downloads.onChanged.addListener(delta => {
-  if (!delta || typeof delta.id !== 'number' || !delta.state) {
-    return;
-  }
-
-  const state = delta.state.current;
-  if (state === 'complete' || state === 'interrupted') {
-    releaseBlobUrlForDownload(delta.id);
-  }
-});
