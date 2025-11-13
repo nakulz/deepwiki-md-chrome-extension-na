@@ -7,6 +7,13 @@
   window.__deepwikiContentScriptLoaded__ = true;
 
   const FALLBACK_FILENAME = 'deepwiki-page';
+  const DIAGRAM_RENDER_TIMEOUT_MS = 15000;
+  const DIAGRAM_RENDER_POLL_INTERVAL_MS = 200;
+  const DIAGRAM_RENDER_STABLE_WINDOW_MS = 600;
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
 
 function sanitizeFilename(input) {
   if (!input || typeof input !== 'string') {
@@ -144,6 +151,68 @@ async function fetchMarkdownResources() {
   return fetchedResources;
 }
 
+function countRenderedDiagramSvgs() {
+  return document.querySelectorAll(
+    'svg[id^="mermaid-"], svg[class*="mermaid"], svg[aria-roledescription], svg[data-mermaid]'
+  ).length;
+}
+
+function hasPendingMermaidBlocks() {
+  const mermaidBlocks = Array.from(
+    document.querySelectorAll(
+      '.mermaid, [data-theme="mermaid"], [data-processed="false"], [data-mermaid]'
+    )
+  );
+
+  const pendingExplicitBlocks = mermaidBlocks.some(block => {
+    if (block.closest('svg')) {
+      return false;
+    }
+
+    const dataProcessed = block.getAttribute('data-processed');
+    const hasSvgChild = Boolean(block.querySelector('svg'));
+    return dataProcessed !== 'true' && !hasSvgChild;
+  });
+
+  if (pendingExplicitBlocks) {
+    return true;
+  }
+
+  const preBlocks = Array.from(document.querySelectorAll('pre'));
+  return preBlocks.some(pre => {
+    const code = pre.querySelector('code.language-mermaid, code.mermaid');
+    if (!code) {
+      return false;
+    }
+
+    return !pre.querySelector('svg[id^="mermaid-"], svg[class*="mermaid"], svg[aria-roledescription]');
+  });
+}
+
+async function waitForDiagramRendering() {
+  const startTime = Date.now();
+  let lastCount = -1;
+  let stableSince = Date.now();
+
+  while (Date.now() - startTime < DIAGRAM_RENDER_TIMEOUT_MS) {
+    const renderedCount = countRenderedDiagramSvgs();
+    const pendingBlocks = hasPendingMermaidBlocks();
+
+    if (!pendingBlocks && renderedCount === lastCount) {
+      if (Date.now() - stableSince >= DIAGRAM_RENDER_STABLE_WINDOW_MS) {
+        return true;
+      }
+    } else {
+      stableSince = Date.now();
+      lastCount = renderedCount;
+    }
+
+    await sleep(DIAGRAM_RENDER_POLL_INTERVAL_MS);
+  }
+
+  return false;
+}
+
 // Listen for messages from popup
   chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === "convertToMarkdown") {
@@ -172,6 +241,15 @@ async function fetchMarkdownResources() {
           document.querySelector(".container > div:nth-child(2) .prose-custom") ||
           document.querySelector(".container > div:nth-child(2)") ||
           document.body;
+
+        try {
+          const rendered = await waitForDiagramRendering();
+          if (!rendered) {
+            console.warn('Timed out waiting for diagrams to finish rendering. Proceeding with current DOM snapshot.');
+          }
+        } catch (diagramError) {
+          console.warn('Failed while waiting for diagrams to render:', diagramError);
+        }
 
         let markdown = ``;
         let markdownTitle = sanitizeFilename(title);
