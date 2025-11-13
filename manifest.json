@@ -6,7 +6,8 @@
   "permissions": [
     "activeTab",
     "downloads",
-    "tabs"
+    "tabs",
+    "scripting"
   ],
   "host_permissions": [
     "https://deepwiki.com/*",
