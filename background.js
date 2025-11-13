@@ -15,6 +15,37 @@ import { isSupportedWikiUrl } from './utils/urlUtils.js';
 // A queue to hold messages for tabs that are not yet ready
 const messageQueue = {};
 const batchJobs = new Map();
+const downloadBlobUrls = new Map();
+
+function trackDownloadBlobUrl(downloadId, blobUrl) {
+  if (typeof downloadId === 'number' && blobUrl) {
+    downloadBlobUrls.set(downloadId, blobUrl);
+    return;
+  }
+
+  if (blobUrl) {
+    try {
+      URL.revokeObjectURL(blobUrl);
+    } catch (error) {
+      console.warn('Failed to revoke blob URL', error);
+    }
+  }
+}
+
+function releaseBlobUrlForDownload(downloadId) {
+  if (!downloadBlobUrls.has(downloadId)) {
+    return;
+  }
+
+  const blobUrl = downloadBlobUrls.get(downloadId);
+  downloadBlobUrls.delete(downloadId);
+
+  try {
+    URL.revokeObjectURL(blobUrl);
+  } catch (error) {
+    console.warn('Failed to revoke blob URL for download', error);
+  }
+}
 
 // Function to safely send a message to a tab, queuing if necessary
 function queueMessageToTab(tabId, message) {
@@ -314,27 +345,38 @@ async function downloadJobZip(job) {
     return;
   }
 
-  const zipUrl = URL.createObjectURL(zipContent);
+    const zipUrl = URL.createObjectURL(zipContent);
 
-  await new Promise((resolve, reject) => {
-    chrome.downloads.download(
-      {
-        url: zipUrl,
-        filename: `${sanitizeFilename(job.folderName || 'deepwiki-export')}.zip`,
-        saveAs: true
-      },
-      downloadId => {
-        if (chrome.runtime.lastError) {
-          reject(new Error(chrome.runtime.lastError.message));
-          return;
-        }
-        resolve(downloadId);
-      }
-    );
-  }).finally(() => {
-    URL.revokeObjectURL(zipUrl);
-  });
-}
+    try {
+      const downloadId = await new Promise((resolve, reject) => {
+        chrome.downloads.download(
+          {
+            url: zipUrl,
+            filename: `${sanitizeFilename(job.folderName || 'deepwiki-export')}.zip`,
+            saveAs: true
+          },
+          downloadId => {
+            if (chrome.runtime.lastError) {
+              reject(new Error(chrome.runtime.lastError.message));
+              return;
+            }
+
+            if (typeof downloadId !== 'number') {
+              reject(new Error('Failed to initiate download'));
+              return;
+            }
+
+            resolve(downloadId);
+          }
+        );
+      });
+
+      trackDownloadBlobUrl(downloadId, zipUrl);
+    } catch (error) {
+      trackDownloadBlobUrl(null, zipUrl);
+      throw error;
+    }
+  }
 
 // Listen for extension installation event
 chrome.runtime.onInstalled.addListener(() => {
@@ -450,5 +492,16 @@ chrome.tabs.onRemoved.addListener(tabId => {
     job.completed = true;
     updateJobStatus(job, 'Tab closed. Batch conversion stopped.', 'error', { completed: true, running: false });
     batchJobs.delete(tabId);
+  }
+});
+
+chrome.downloads.onChanged.addListener(delta => {
+  if (!delta || typeof delta.id !== 'number' || !delta.state) {
+    return;
+  }
+
+  const state = delta.state.current;
+  if (state === 'complete' || state === 'interrupted') {
+    releaseBlobUrlForDownload(delta.id);
   }
 });
