@@ -155,42 +155,15 @@ async function waitForPageInteractive(tabId, targetUrl, previousUrl) {
     const currentUrl = tab.url || tab.pendingUrl || '';
     const normalizedCurrent = normalizeUrlForComparison(currentUrl);
 
-    let isContentReady = false;
-    try {
-      const response = await sendMessageToTab(tabId, { action: 'ping' });
-      isContentReady = Boolean(response && response.ready);
-    } catch (error) {
-      // Ignore errors while the content script is still loading
-    }
-
-    if (!isContentReady) {
-      await delay(PAGE_READY_POLL_INTERVAL_MS);
-      continue;
-    }
-
-    if (!normalizedTarget || normalizedCurrent === normalizedTarget) {
-      return tab;
-    }
-
-    const previousMatchesCurrent = Boolean(
-      normalizedPrevious && normalizedCurrent && normalizedCurrent === normalizedPrevious
-    );
-
-    const resolvedToDifferentWikiDoc = Boolean(
-      normalizedTarget &&
-        normalizedCurrent &&
-        normalizedCurrent !== normalizedTarget &&
-        !previousMatchesCurrent &&
-        shareSameOrigin(currentUrl, targetUrl) &&
-        isSupportedWikiUrl(currentUrl)
-    );
-
-    if (resolvedToDifferentWikiDoc) {
-      console.warn(
-        'Navigation resolved to a different wiki URL than requested. Continuing with actual page.',
-        { requested: targetUrl, resolved: currentUrl }
-      );
-      return tab;
+    if (normalizedCurrent === normalizedTarget) {
+      try {
+        const response = await sendMessageToTab(tabId, { action: 'ping' });
+        if (response && response.ready) {
+          return tab;
+        }
+      } catch (error) {
+        // Ignore errors while waiting for the content script to initialize
+      }
     }
 
     await delay(PAGE_READY_POLL_INTERVAL_MS);
