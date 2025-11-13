@@ -773,6 +773,69 @@ function convertFlowchartSvgToMermaidText(svgElement) {
   return '```mermaid\n' + mermaidCode.trim() + '\n```';
 }
 
+function convertMermaidSvgElement(svgElement) {
+  if (!svgElement) {
+    return null;
+  }
+
+  const ariaDescription = (svgElement.getAttribute('aria-roledescription') || '').toLowerCase();
+  const classListAttr = (svgElement.getAttribute('class') || '').toLowerCase();
+  const svgId = svgElement.getAttribute('id') || '';
+  const looksLikeMermaid = svgId.startsWith('mermaid-') || classListAttr.includes('mermaid');
+  const hasHints =
+    looksLikeMermaid ||
+    Boolean(ariaDescription) ||
+    classListAttr.includes('flowchart') ||
+    classListAttr.includes('class') ||
+    classListAttr.includes('sequence') ||
+    classListAttr.includes('state');
+
+  if (!hasHints) {
+    return null;
+  }
+
+  const tryFlowchart = () => convertFlowchartSvgToMermaidText(svgElement);
+  const tryClassDiagram = () => convertClassDiagramSvgToMermaidText(svgElement);
+  const trySequenceDiagram = () => convertSequenceDiagramSvgToMermaidText(svgElement);
+  const tryStateDiagram = () => convertStateDiagramSvgToMermaidText(svgElement);
+
+  let mermaidOutput = null;
+
+  if (ariaDescription.includes('flowchart') || classListAttr.includes('flowchart')) {
+    mermaidOutput = tryFlowchart();
+  } else if (
+    ariaDescription.includes('class') ||
+    classListAttr.includes('classdiagram') ||
+    classListAttr.includes('class')
+  ) {
+    mermaidOutput = tryClassDiagram();
+  } else if (ariaDescription.includes('sequence') || classListAttr.includes('sequence')) {
+    mermaidOutput = trySequenceDiagram();
+  } else if (
+    ariaDescription.includes('statediagram') ||
+    ariaDescription.includes('state diagram') ||
+    classListAttr.includes('statediagram') ||
+    classListAttr.includes('state-diagram') ||
+    classListAttr.includes('state diagram')
+  ) {
+    mermaidOutput = tryStateDiagram();
+  }
+
+  if (!mermaidOutput && looksLikeMermaid) {
+    if (svgElement.querySelector('text.actor-box')) {
+      mermaidOutput = trySequenceDiagram();
+    } else if (svgElement.querySelector('g.node.default[id^="classId-"]')) {
+      mermaidOutput = tryClassDiagram();
+    } else if (svgElement.querySelector('g.node.statediagram-state')) {
+      mermaidOutput = tryStateDiagram();
+    } else if (svgElement.querySelector('g.node, g.cluster')) {
+      mermaidOutput = tryFlowchart();
+    }
+  }
+
+  return mermaidOutput;
+}
+
 // Function for Class Diagram (ensure this exists from previous responses)
 function convertClassDiagramSvgToMermaidText(svgElement) {
   if (!svgElement) return null;
@@ -1817,45 +1880,7 @@ function processNode(node) {
       }
       case "PRE": {
         const svgElement = element.querySelector('svg[id^="mermaid-"]');
-        let mermaidOutput = null;
-
-        if (svgElement) {
-          const diagramTypeDesc = svgElement.getAttribute('aria-roledescription');
-          const diagramClass = svgElement.getAttribute('class');
-
-          console.log("Found SVG in PRE: desc=", diagramTypeDesc, "class=", diagramClass); // DEBUG
-          if (diagramTypeDesc && diagramTypeDesc.includes('flowchart')) {
-            console.log("Trying to convert flowchart..."); // DEBUG
-            mermaidOutput = convertFlowchartSvgToMermaidText(svgElement);
-          } else if (diagramTypeDesc && diagramTypeDesc.includes('class')) {
-            console.log("Trying to convert class diagram..."); // DEBUG
-            mermaidOutput = convertClassDiagramSvgToMermaidText(svgElement);
-          } else if (diagramTypeDesc && diagramTypeDesc.includes('sequence')) {
-            console.log("Trying to convert sequence diagram..."); // DEBUG
-            mermaidOutput = convertSequenceDiagramSvgToMermaidText(svgElement);
-          } else if (diagramTypeDesc && diagramTypeDesc.includes('stateDiagram')) {
-            console.log("Trying to convert state diagram..."); // DEBUG
-            mermaidOutput = convertStateDiagramSvgToMermaidText(svgElement);
-          } else if (diagramClass && diagramClass.includes('flowchart')) {
-              console.log("Trying to convert flowchart by class..."); // DEBUG
-              mermaidOutput = convertFlowchartSvgToMermaidText(svgElement);
-          } else if (diagramClass && (diagramClass.includes('classDiagram') || diagramClass.includes('class'))) {
-              console.log("Trying to convert class diagram by class..."); // DEBUG
-              mermaidOutput = convertClassDiagramSvgToMermaidText(svgElement);
-          } else if (diagramClass && (diagramClass.includes('sequenceDiagram') || diagramClass.includes('sequence'))) {
-              console.log("Trying to convert sequence diagram by class..."); // DEBUG
-              mermaidOutput = convertSequenceDiagramSvgToMermaidText(svgElement);
-          } else if (diagramClass && (diagramClass.includes('statediagram') || diagramClass.includes('stateDiagram'))) {
-              console.log("Trying to convert state diagram by class..."); // DEBUG
-              mermaidOutput = convertStateDiagramSvgToMermaidText(svgElement);
-          }
-          
-          if (mermaidOutput) {
-            console.log("Successfully converted SVG to mermaid:", mermaidOutput.substring(0, 100) + "..."); // DEBUG
-          } else {
-            console.log("Failed to convert SVG, using fallback"); // DEBUG
-          }
-        }
+        const mermaidOutput = convertMermaidSvgElement(svgElement);
 
         if (mermaidOutput) {
           resultMd = `\n${mermaidOutput}\n\n`;
@@ -1880,6 +1905,15 @@ function processNode(node) {
           }
           resultMd = `\`\`\`${lang}\n${txt.trim()}\n\`\`\`\n\n`;
         }
+        break;
+      }
+      case "SVG": {
+        const mermaidOutput = convertMermaidSvgElement(element);
+        if (mermaidOutput) {
+          resultMd = `\n${mermaidOutput}\n\n`;
+          break;
+        }
+        resultMd = "";
         break;
       }
       case "A": {
