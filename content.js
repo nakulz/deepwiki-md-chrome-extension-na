@@ -1879,7 +1879,10 @@ function processNode(node) {
         break;
       }
       case "PRE": {
-        const svgElement = element.querySelector('svg[id^="mermaid-"]');
+        const svgElement =
+          element.querySelector('svg[id^="mermaid-"]') ||
+          element.querySelector('svg[aria-roledescription]') ||
+          element.querySelector('svg[class*="mermaid"]');
         const mermaidOutput = convertMermaidSvgElement(svgElement);
 
         if (mermaidOutput) {
