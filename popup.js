@@ -121,8 +121,23 @@ function urlsReferToSameDocument(firstUrl, secondUrl) {
   return normalizeUrlForComparison(firstUrl) === normalizeUrlForComparison(secondUrl);
 }
 
-async function waitForPageInteractive(tabId, targetUrl) {
+function shareSameOrigin(firstUrl, secondUrl) {
+  if (!firstUrl || !secondUrl) {
+    return false;
+  }
+
+  try {
+    const first = new URL(firstUrl);
+    const second = new URL(secondUrl);
+    return first.origin === second.origin;
+  } catch (error) {
+    return false;
+  }
+}
+
+async function waitForPageInteractive(tabId, targetUrl, previousUrl) {
   const normalizedTarget = normalizeUrlForComparison(targetUrl);
+  const normalizedPrevious = normalizeUrlForComparison(previousUrl);
   const startTime = Date.now();
 
   while (Date.now() - startTime < PAGE_READY_TIMEOUT_MS) {
@@ -162,7 +177,7 @@ async function ensureTabAtUrl(tabId, targetUrl, previousUrl) {
     await chrome.tabs.update(tabId, { url: targetUrl });
   }
 
-  return waitForPageInteractive(tabId, targetUrl);
+  return waitForPageInteractive(tabId, targetUrl, previousUrl);
 }
 
 async function safelyReturnToUrl(tabId, targetUrl) {

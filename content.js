@@ -335,7 +335,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
               url: key,
               title: linkTitle || fallbackTitle,
               selected: treatAsNav ? selected : (isCurrent && matchesCurrentHash),
-              fallbackTitle
+              fallbackTitle,
+              source: treatAsNav ? 'nav' : 'content'
             };
 
             seen.set(key, entry);
@@ -363,7 +364,17 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           document.querySelectorAll(selector).forEach(link => recordLink(link, { treatAsNav: false }));
         });
 
-        return results.map(({ fallbackTitle, ...rest }) => rest);
+        const namespaceSegments = deriveNamespaceSegments(results);
+        let filteredResults = results;
+
+        if (namespaceSegments.length) {
+          const scopedEntries = results.filter(entry => matchesNamespace(entry, namespaceSegments));
+          if (scopedEntries.length) {
+            filteredResults = scopedEntries;
+          }
+        }
+
+        return filteredResults.map(({ fallbackTitle, source, ...rest }) => rest);
       };
 
       // Get all wiki links available on the page
